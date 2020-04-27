@@ -1,0 +1,178 @@
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+    this template create two Amazon EC2 instances, and Application Load Balancer.
+Parameters:
+    KeyName:
+        Description: Name of an existing EC2 key paire
+        Type: AWS::EC2::KeyPair::KeyName
+    VPC:
+        Type: AWS::EC2::VPC::Id
+        Description: choose which VPC that the applicaion load Balancer should be deployed to 
+    Subnets:
+        Description: choose minimum of 2 Subnets (2 diffrent availiblity zones) that applicaion load Balancer should deployed to
+        Type: List<AWS::EC2::Subnet::Id>
+Resources:
+    ec2Instance1:
+        Type: AWS::EC2::Instance 
+        Metadata:
+            AWS::CloudFormation::Init:
+                config:
+                    files:
+                        /home/ec2-user/public/index.html:
+                            content: !Sub ¡
+                               <html><head><title> simple web app </title></head><body> Hello world </body></html>
+                        /home/ec2-user/package.json:
+                            content: !Sub ¡
+                              {"name":"simple-app","authers":"safi","dependencies":{"express":"4.15.4"}}
+                        /home/ec2-user/server.js:
+                            content: !Sub ¡
+                              var express = require('express'),
+                                app= express(),
+                                port= process.env.PORT ¡¡ 80;
+                                app.use(express.static__dirname + '/public'));
+                                app.listen(port, function(){
+                                    console.log('server listengin on port ', port)
+                                })
+                    Commands:
+                        NPMInstall:
+                            command: 'npm install'
+                            cwd: '/home/ec2-user/'
+                        RunWebserver:
+                            command: 'node /home/ec2-user/server.js'
+                            cwd: '/home/ec2-user/'
+        
+        Properties:
+            InstanceType: t2.micro
+            ImageId: ami-0915e09cc7ceee3ab
+            Tags:
+                - Key: Name
+                  Value: WebServer1
+            KeyName: !Ref KeyName
+            SecurityGroups:
+                - !Ref MysecurityGroup
+            UserData:
+                'Fn::Base64':
+                    #!/bin/bash -xe
+                    yum install -y aws-cfn-bootstrap
+                    curl --silent --location https://rpm.nodesource.com/setup_11.x ¡ bash -
+                    yum -y install nodejs
+                    echo 'Node.js installed'
+                    /opt/aws/bin/cfn-init -v --stack ${AWS::stackName} --resource ec2Instance1 --region ${AWS::Region}
+    ec2Instance2:
+        Type: AWS::EC2::Instance 
+        Metadata:
+            AWS::CloudFormation::Init:
+                config:
+                    files:
+                        /home/ec2-user/public/index.html:
+                            content: !Sub ¡
+                                <html><head><title> simple web app </title></head><body> Hello world </body></html>
+                        /home/ec2-user/package.json:
+                            content: !Sub ¡
+                                {"name":"simple-app","authers":"safi","dependencies":{"express":"4.15.4"}}
+                        /home/ec2-user/server.js:
+                            content: !Sub ¡
+                                var express = require('express'),
+                                app= express(),
+                                port= process.env.PORT ¡¡ 80;
+                                app.use(express.static__dirname + '/public'));
+                                app.listen(port, function(){
+                                    console.log('server listengin on port ', port)
+                                })
+                    commands:
+                        NPMInstall:
+                            command: 'npm install'
+                            cwd: '/home/ec2-user/'
+                        RunWebserver:
+                            command: 'node /home/ec2-user/server.js'
+                            cwd: '/home/ec2-user/'
+        
+        Properties:
+            InstanceType: t2.micro
+            ImageId: ami-0915e09cc7ceee3ab
+            Tags:
+                - Key: Name
+                  Value: WebServer2
+            KeyName: !Ref KeyName
+            SecurityGroups:
+                - !Ref MysecurityGroup
+            UserData:
+                'Fn::Base64':
+                    #!/bin/bash
+                    yum install -y aws-cfn-bootstrap
+                    curl --silent --location https://rpm.nodesource.com/setup_11.x ¡ bash -
+                    yum -y install nodejs
+                    echo 'Node.js installed'
+                    /opt/aws/bin/cfn-init -v --stack ${AWS::stackName} --resource ec2Instance1 --region ${AWS::Region}
+    MysecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            GroupDescription: enable ssh access via port 22 enable http via port 80
+            SecurityGroupIngress:
+                - IpProtocol: tcp
+                  FromPort: '22'
+                  ToPort: '22'
+                  CidrIp: 0.0.0.0/0
+                - IpProtocol: tcp
+                  FromPort: '80'
+                  ToPort: '80'
+                  CidrIp: 0.0.0.0/0
+    ApplicationLoadBalancer:
+        Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+        Properties:
+            Name: 'MyLoadBalancer1'
+            Subnets: !Ref Subnets
+            SecurityGroups: [!GetAtt MysecurityGroup.GroupId]
+    ALBListener:
+        Type: AWS::ElasticLoadBalancingV2::Listener
+        Properties:
+            DefaultActions:
+                - Type: forward
+                  TargetGroupArn: !Ref ALBTargetGroup
+            LoadBalancerArn: !Ref ApplicationLoadBalancer
+            Port: 80
+            Protocol: HTTP
+    ALBTargetGroup:
+        Type: AWS::ElasticLoadBalancingV2::TargetGroup
+        Properties:
+            Protocol: HTTP
+            Port: 80
+            HealthCheckIntervalSeconds: 30
+            HealthCheckProtocol: HTTP
+            HealthCheckTimeoutSeconds: 10
+            HealthyThresholdCount: 3
+            Matcher:
+                HttpCode: '200'
+            Name: myTargets
+            Targets:
+                - Id:
+                    Ref: ec2Instance1
+                  Port: 80
+                - Id:
+                    Ref: ec2Instance2
+                  Port: 80
+            VpcId: !Ref VPC
+Outputs:
+        SecurityGroup:
+            Description: Security Group
+            Value: !Ref MysecurityGroup
+        SecurityGroupId:
+            Description: Security group Id
+            Value: !GetAtt MysecurityGroup.GroupId
+        LoadBalancer:
+            Description: a refrence to the application load Balancer
+            Value: !Ref ApplicationLoadBalancer
+        LoadBalancerUrl:
+            Description: the url of the LoadBalancer
+            Value: !GetAtt ApplicationLoadBalancer.DNSName
+        WebServer1Dns:
+            Description: ec2 instance 1
+            Value: !GetAtt
+             - ec2Instance1
+             - PublicDnsName
+        WebServer2Dns:
+            Description: ec2 ec2Instance2
+            Value: !GetAtt
+             - ec2Instance2
+             - PublicDnsName
