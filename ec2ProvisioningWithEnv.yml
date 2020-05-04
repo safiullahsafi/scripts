@@ -155,4 +155,4 @@
      
     - name: print the result
       debug: 
-        var: ec2info
+        var: ec2info 
