@@ -1,0 +1,158 @@
+---
+- name: AWS EC2 Automaion playbook
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars/info.yml
+  tasks:
+    - name: create a vpc
+      ec2_vpc_net:
+        aws_access_key: "{{aws_id }}"
+        aws_secret_key: "{{aws_key }}"
+        region: "{{ aws_region}}"
+        name: test_vpc_net
+        cidr_block: 10.10.0.0/16
+        tags:
+          module: ec2_vpc_net
+        tenancy: default
+      register: ansibleVPC
+     
+    - name: debugVPC
+      debug:
+        var: ansibleVPC
+
+      
+    - name: create a subnet
+      ec2_vpc_subnet:
+        aws_access_key: "{{aws_id }}"
+        aws_secret_key: "{{aws_key }}"
+        region: "{{ aws_region}}"
+        state: present
+        cidr: 10.10.0.0/16
+        vpc_id: "{{ ansibleVPC.vpc.id }}"
+        map_public: yes
+        tags: 
+          Name: public subnet
+      register: public_subnet
+      
+    - name: show public subnet details
+      debug:
+       var: public_subnet
+
+
+    - name: create an internet gateway
+      ec2_vpc_igw:
+        aws_access_key: "{{aws_id }}"
+        aws_secret_key: "{{aws_key }}"
+        region: "{{ aws_region}}"
+        state: present
+        vpc_id: "{{ ansibleVPC.vpc.id }}"
+        tags:
+          Name: ansibleVPC_IGW
+      register: ansibleVPC_IGW
+
+    - name: show ansibleVPCIGW  details
+      debug:
+       var: ansibleVPC_IGW
+
+    - name: create new route table for public subnet
+      ec2_vpc_route_table:
+        aws_access_key: "{{aws_id }}"
+        aws_secret_key: "{{aws_key }}"
+        region: "{{ aws_region}}"
+        state: present
+        vpc_id: "{{ ansibleVPC.vpc.id }}"
+        tags:
+          Name: rt_ansibleVPC_publicSubnet
+        subnets: 
+          - "{{public_subnet.subnet.id}}"
+        routes:
+         - dest: 0.0.0.0/0
+           gateway_id: "{{ansibleVPC_IGW.gateway_id}}"
+      register: rt_ansibleVPC_publicSubnet
+      
+    - name: display public route table
+      debug:
+        var:  rt_ansibleVPC_publicSubnet
+
+
+    - name: create new security group
+      ec2_group:
+        aws_access_key: "{{aws_id }}"
+        aws_secret_key: "{{aws_key }}"
+        region: "{{ aws_region}}"
+        name: "testSG"
+        description: "test security group"
+        vpc_id: "{{ ansibleVPC.vpc.id }}"
+        tags:
+          Name: testSG
+        rules:
+          - proto: "tcp"
+            ports: "22"
+            cidr_ip: 0.0.0.0/0
+
+      register: my_vpc_sg
+
+    - name: display sg
+      debug:
+        var:  my_vpc_sg
+
+
+    - name: find amis published by redhat (309956199498)
+      ec2_ami_info:
+        aws_access_key: "{{aws_id }}"
+        aws_secret_key: "{{aws_key }}"
+        region: "{{ aws_region}}"
+        owner: 309956199498
+        filters: 
+          architecture: x86_64
+          name: RHEL-8*HVM-*
+     
+      register: amis
+
+    - name: display amis
+      debug:
+        var:  amis
+    - name: get the latest one
+      set_fact:
+        latest_ami: "{{amis.images | sort (attribute='creation_date') | last }}"
+      
+
+    - name: display the lates ami
+      debug: 
+        var: latest_ami
+
+
+    - name: create ssh key
+      ec2_key:
+        aws_access_key: "{{aws_id }}"
+        aws_secret_key: "{{aws_key }}"
+        name: "{{ ssh_keyname }}"
+        region: "{{ aws_region}}"
+      register: ec2_key_result
+    - name: save private key
+      copy: content="{{ ec2_key_result.key.private_key }}" dest="./demo_key.pem" mod=0600
+      when: ec2_key_result.changed
+   
+
+    - name: basic provisioning of ec2 instance
+      ec2:
+        aws_access_key: "{{aws_id }}"
+        aws_secret_key: "{{aws_key }}"
+        region: "{{ aws_region}}"
+        image: "{{ latest_ami.image_id}}"
+        instance_type: t2.micro
+        key_name: "{{ssh_keyname }}"
+        count: 2
+        state: present
+        group: testSG
+        wait: yes
+        vpc_subnet_id: "{{public_subnet.subnet.id }}"
+        assign_public_ip: yes
+        instance_tags: 
+          Name: new_demo_template
+      register: ec2info
+     
+    - name: print the result
+      debug: 
+        var: ec2info
