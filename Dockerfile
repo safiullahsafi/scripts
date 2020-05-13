@@ -1,3 +1,4 @@
+# creating docker image for angular app
 FROM nginx:alpine
 LABEL author="safiullah"
 COPY ./dist /usr/share/nginx/html
